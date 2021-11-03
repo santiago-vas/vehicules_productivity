@@ -5,14 +5,14 @@ def list_diff(list1, list2):
 def getLastData(imeisToAnalyze,project,clientId,nameDate,tableName):
     # Last date
     try:  
-        deviceList = pd.read_sql("""select imei, max(max_date) as begin_time from platform.looker_data_upload 
+        deviceList = pd.read_sql("""select imei, max(max_date) as begin_time from p.lookml
                 where type='daily' and flat=1 and process_name='{}' and client_id={} and dashboard_type='{}'
                 group by imei """.format(processName, clientId, dashboardType), psqlCon)
         
         if len(deviceList)==0: 
             queryLastDate = clientBigQueryLookerAnalytics.query("""SELECT imei, max({}) as begin_time
-                                                          FROM `{}.{}.{}`
-                                                         GROUP BY imei""".format(nameDate,project,clientId,tableName))
+                                                          FROM `{}.{}`
+                                                         GROUP BY imei""".format(project,clientId,tableName))
             resultLastDate = queryLastDate.result()
             deviceList = resultLastDate.to_dataframe()
             
