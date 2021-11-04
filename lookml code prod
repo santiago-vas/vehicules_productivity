@@ -29,11 +29,6 @@ view: fleet_productivity_daily_aggregate {
     type: count_distinct
     sql: ${date_week} ;;
   }
-  measure:m_month_liz {
-    label: "conteo meses"
-    type: count_distinct
-    sql: ${date_month} ;;
-  }
   measure:m_year_liz {
     label: "conteo anios"
     type: count_distinct
