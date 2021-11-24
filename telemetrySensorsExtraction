@@ -1,0 +1,183 @@
+for i in range(2):
+    
+    print(deviceList.begin_time.dt.date.unique(),deviceList.end_time.dt.date.unique())
+    processBeginTime = datetime.now()
+    if (activeDevices == True) & (activeCanbus == True):
+
+        historyDataCan, historyDataGps = historyLevelData(deviceList, parametersData)
+        print('History Can {0} - Gps: {1}'.format(historyDataCan.shape,historyDataGps.shape))
+
+    else:
+        historyDataCan = pd.DataFrame()
+        tripsData = pd.DataFrame()
+        dailyData = pd.DataFrame()
+        print('No data to process')
+    processEndTime = datetime.now()
+
+    print('la data ya esta cargada')
+
+    ## Agrupado Viajes
+    # Validación de campos
+    threshold = 20
+    vehicleDataFrame = pd.DataFrame()
+    for imei in historyDataCan["imei"].unique():
+        vehicleData =  historyDataCan[historyDataCan['imei']==imei].sort_values('generateTime', ascending=True).reset_index(drop=True)
+        vehicleData = totalDistanceValidation(vehicleData) 
+        vehicleData = totalFuelUsedValidation(vehicleData) 
+        vehicleData = totalIdleFuelUsedValidation(vehicleData) 
+        vehicleData = totalDrivingTimeValidation(vehicleData) 
+        vehicleData = totalIdleTimeValidation(vehicleData) 
+        vehicleDataFrame = vehicleDataFrame.append(vehicleData)
+
+    historyDataCan = vehicleDataFrame.copy()
+    historyDataCan.drop(columns = {'deviceSpeedLimit', 'hasCanbus'}, inplace=True)
+    historyDataGps.rename(columns={'additionalTripId':'tripId'}, inplace=True)
+    historyDataCan = historyDataCan.sort_values(by = ["imei", "tripId", "generateTime"])
+    historyDataGps = historyDataGps.sort_values(by = ["imei", "tripId", "generateTime"])
+    filteredData = historyDataCan.loc[historyDataCan.tripId > 1]
+    filteredDataGps = historyDataGps.loc[historyDataGps.tripId > 1]
+
+    vehicleDataframe = filteredData.copy()
+    filteredData = pd.DataFrame()
+    for trip in vehicleDataframe.tripId.unique():
+        vehicleData = vehicleDataframe[vehicleDataframe.tripId == trip]
+        try:
+            vehicleData['timeDiff'] = vehicleData.generateTime.diff().dt.total_seconds()
+            vehicleData.timeDiff.fillna(0, inplace=True)
+            filteredData = filteredData.append(vehicleData)
+        except:
+            vehicleData['timeDiff'] = 0
+            filteredData = filteredData.append(vehicleData)
+
+    filteredData = filteredData.reset_index(drop=True)
+
+    filteredData['engine_idle_time_can'] = 0
+    filteredData['less_than_1000_time_can'] = 0
+    filteredData['range_1000_and_1200_time_can'] = 0
+    filteredData['range_1200_and_1600_time_can'] = 0
+    filteredData['range_1600_and_1900_time_can'] = 0
+    filteredData['more_than_1900_time_can'] = 0
+    # RPM Events
+    for index, row in filteredData.iterrows():
+        if ( (row['engineRPM'] > 200) & (row['engineRPM'] <= 780) & (row['speed'] == 0)):
+            filteredData.at[index,"engine_idle_time_can"] = filteredData.at[index,"timeDiff"]
+
+        elif ( (row['engineRPM'] > 780) & (row['engineRPM'] <= 1000) & (row['speed'] > 0)):
+            filteredData.at[index,"less_than_1000_time_can"] = filteredData.at[index,"timeDiff"]
+
+        elif ( (row['engineRPM'] > 1000) & (row['engineRPM'] <= 1200) & (row['speed'] > 0)):
+            filteredData.at[index,"range_1000_and_1200_time_can"] = filteredData.at[index,"timeDiff"]
+
+        elif ( (row['engineRPM'] > 1200) & (row['engineRPM'] <= 1600) & (row['speed'] > 0)):
+            filteredData.at[index,"range_1200_and_1600_time_can"] = filteredData.at[index,"timeDiff"]
+
+        elif ( (row['engineRPM'] > 1600) & (row['engineRPM'] <= 1900) & (row['speed'] > 0)):
+            filteredData.at[index,"range_1600_and_1900_time_can"] = filteredData.at[index,"timeDiff"]
+
+        elif ( (row['engineRPM'] > 1900) & (row['speed'] > 0)):
+            filteredData.at[index,"more_than_1900_time_can"] = filteredData.at[index,"timeDiff"]
+        else:
+            continue
+
+    groupedData = filteredData.groupby(["groupName", "imei", "devicePlate", "unitAlias", "tripId", "driverCompleteName"])
+    groupedDataGps = filteredDataGps.groupby(["imei", "tripId"])
+    km_covered_can = groupedData.agg(lambda x: (max(x) - min(x)))["totalDistance"].tolist()
+    total_fuel_used_can = groupedData.agg(lambda x: (max(x) - min(x)))["totalFuelUsed"].tolist()
+    idle_fuel_used_can = groupedData.agg(lambda x: (max(x) - min(x)))["totalIdleFuelUsed"].tolist()
+    engine_idle_time_can = groupedData.sum()["engine_idle_time_can"].tolist() # Segundos
+    less_than_1000_time_can = groupedData.sum()["less_than_1000_time_can"].tolist()
+    range_1000_and_1200_time_can = groupedData.sum()["range_1000_and_1200_time_can"].tolist()
+    range_1200_and_1600_time_can = groupedData.sum()["range_1200_and_1600_time_can"].tolist()
+    range_1600_and_1900_time_can = groupedData.sum()["range_1600_and_1900_time_can"].tolist()
+    more_than_1900_time_can = groupedData.sum()["more_than_1900_time_can"].tolist()
+
+    maxSpeed = groupedData.max()["speed"].tolist()
+    meanSpeed = groupedData.mean()["speed"].tolist()
+    minFuelLevelInput = groupedData.min()["fuelLevelInput"].tolist()
+    meanFuelLevelInput = groupedData.mean()["fuelLevelInput"].tolist()
+    maxFuelLevelInput = groupedData.max()["fuelLevelInput"].tolist()
+    engineTimeGps = groupedData.agg(lambda x: (max(x) - min(x)))["generateTime"].dt.total_seconds().tolist()
+    beginGenerate = groupedData.min()["generateTime"].tolist()
+    endGenerate = groupedData.max()["generateTime"].tolist()
+    beginLatitude = groupedData.first()["lat"].tolist()
+    endLatitude = groupedData.last()["lat"].tolist()
+    beginLongitude = groupedData.first()["lng"].tolist()
+    endLongitude = groupedData.last()["lng"].tolist()
+    beginAddress = groupedData.first()["address"].tolist()
+    endAddress = groupedData.last()["address"].tolist()
+    totalMessages = groupedData.count()["totalDistance"].tolist()
+    ignitionOn = groupedDataGps.agg(lambda x: (sum(x == 35)))["alertId"].tolist()
+    ignitionOff = groupedDataGps.agg(lambda x: (sum(x == 36)))["alertId"].tolist()
+    data = filteredData[["groupName", "imei", "devicePlate", "unitAlias", "tripId", "driverCompleteName"]].drop_duplicates()
+    dataGps = filteredDataGps[["imei", "tripId"]].drop_duplicates()
+    data = data.sort_values(by = ["groupName","imei", "tripId", "driverCompleteName"])
+    dataGps = dataGps.sort_values(by = ["imei", "tripId"])
+    data["km_covered_can"] = km_covered_can
+    data["engine_idle_time_can"] = engine_idle_time_can #Segundos
+
+    data["total_fuel_used_can"] = total_fuel_used_can #Litros
+    data["idle_fuel_used_can"] = idle_fuel_used_can #Litros
+    data["less_than_1000_time_can"] = less_than_1000_time_can #Segundos
+    data["range_1000_and_1200_time_can"] = range_1000_and_1200_time_can #Segundos
+    data["range_1200_and_1600_time_can"] = range_1200_and_1600_time_can #Segundos
+    data["range_1600_and_1900_time_can"] = range_1600_and_1900_time_can #Segundos
+    data["more_than_1900_time_can"] = more_than_1900_time_can #Segundos
+    data["maxSpeed"] = maxSpeed
+    data["meanSpeed"] = meanSpeed
+    data["engineTimeGps"] = engineTimeGps # Segundos
+    data["minFuelLevelInput"] = minFuelLevelInput
+    data["meanFuelLevelInput"] = meanFuelLevelInput
+    data["maxFuelLevelInput"] = maxFuelLevelInput
+    data["beginGenerate"] = beginGenerate
+    data["endGenerate"] = endGenerate
+    data["beginLatitude"] = beginLatitude
+    data["endLatitude"] = endLatitude
+    data["beginLongitude"] = beginLongitude
+    data["endLongitude"] = endLongitude
+    data["beginAddress"] = beginAddress
+    data["endAddress"] = endAddress
+    data["totalMessages"] = totalMessages
+    dataGps["ignitionOn"] = ignitionOn
+    dataGps["ignitionOff"] = ignitionOff
+    data = pd.merge(data, dataGps, how='left', on=['imei', 'tripId'])
+    data.fillna(0, inplace=True)
+    data = data[(data.ignitionOn == 1) & (data.ignitionOff == 1)]
+    data.drop(columns={'ignitionOn', 'ignitionOff'}, inplace=True)
+    data["beginGenerate"] = data["beginGenerate"] + timedelta(hours = offset)
+    data["endGenerate"] = data["endGenerate"] + timedelta(hours = offset)
+    data["date"] = data["endGenerate"].apply(lambda x: x.date())
+
+    for index, row in data.iterrows():
+        if ( (row['engine_idle_time_can'] > row['engineTimeGps']) ):
+            data.at[index,"engine_idle_time_can"] = 0
+        else:
+            continue
+
+    data["driving_time_can"] = data["engineTimeGps"] - data["engine_idle_time_can"] 
+    data["less_than_1000_events_can"] = data["less_than_1000_time_can"].apply(lambda x: int(x/60))
+    data["more_than_1900_events_can"] = data["more_than_1900_time_can"].apply(lambda x: int(x/60))
+    data["range_1000_and_1200_events_can"] = data["range_1000_and_1200_time_can"].apply(lambda x: int(x/60))
+    data["range_1200_and_1600_events_can"] = data["range_1200_and_1600_time_can"].apply(lambda x: int(x/60))
+    data["range_1600_and_1900_events_can"] = data["range_1600_and_1900_time_can"].apply(lambda x: int(x/60))
+
+    data = data.reset_index(drop=True)
+    data.rename(columns={'devicePlate': 'device_plate', 'driverCompleteName': 'driver_name', 
+                        'engineTimeGps': 'engine_time_can', 'groupName': 'group_name', 
+                        'unitAlias': 'unit_alias', 'tripId': 'trip_id', 'totalMessages': 'total_messages_can', 
+                        'maxSpeed': 'max_speed_gps', 'meanSpeed': 'mean_speed_gps',
+                        'beginGenerate': 'begin_generate_gps',
+                        'endGenerate': 'end_generate_gps',
+                        'beginLatitude': 'begin_latitude_gps',
+                        'endLatitude': 'end_latitude_gps',
+                        'beginLongitude': 'begin_longitude_gps',
+                        'endLongitude': 'end_longitude_gps',
+                        }, inplace=True)
+    data.drop(columns = {'minFuelLevelInput', 'meanFuelLevelInput', 'maxFuelLevelInput', 'beginAddress', 'endAddress'}, inplace=True)
+    data = data[(data.km_covered_can > 0.3) & (data.km_covered_can < 3000)]
+
+    data.to_sql('enel_fleet_trips', con=psqlCon, schema='platform' ,if_exists='append', index=False)
+    print(data.shape,'guardado canbus entel_fleet_trips')
+    
+    deviceList.begin_time=deviceList.begin_time+timedelta(days=15)
+    deviceList.end_time=deviceList.end_time+timedelta(days=15)
+    print(deviceList.begin_time.dt.date.unique(),deviceList.end_time.dt.date.unique())
